@@ -157,6 +157,14 @@ final class DictationController {
         }
 
         let processedText = await cleanupService.clean(rawText, settings: settings, appContext: insertionAppContext)
+        AppLogger.shared.log(
+            "Transcript raw (\(rawText.count) chars): \(transcriptPreview(rawText))",
+            level: .debug
+        )
+        AppLogger.shared.log(
+            "Transcript cleaned (\(processedText.count) chars): \(transcriptPreview(processedText))",
+            level: .debug
+        )
 
         guard !processedText.isEmpty else {
             panelController.showTemporary(status: "No speech detected", transcript: nil, hideAfter: 1.4)
@@ -221,5 +229,16 @@ final class DictationController {
                 self.status = .idle
             }
         }
+    }
+
+    private func transcriptPreview(_ text: String, maxLength: Int = 320) -> String {
+        let normalized = text.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalized.count > maxLength else {
+            return normalized
+        }
+
+        let cutoff = normalized.index(normalized.startIndex, offsetBy: maxLength)
+        return "\(normalized[..<cutoff])..."
     }
 }

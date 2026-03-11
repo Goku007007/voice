@@ -61,7 +61,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
     <key>CFBundleExecutable</key>
     <string>voice</string>
     <key>CFBundleIdentifier</key>
-    <string>ai.gokul.voice</string>
+    <string>com.voice.app</string>
     <key>CFBundleVersion</key>
     <string>${APP_BUILD}</string>
     <key>CFBundleShortVersionString</key>
@@ -93,7 +93,7 @@ else
     echo "No Developer Certificate found. Falling back to persistent ad-hoc signing..."
     # Without a cert, a plain ad-hoc signature defaults to a cdhash requirement
     # and causes TCC to treat rebuilt apps as a new identity every time.
-    codesign --force --deep -s - -i "ai.gokul.voice" -r='designated => identifier "ai.gokul.voice"' "$APP_DIR"
+    codesign --force --deep -s - -i "com.voice.app" -r='designated => identifier "com.voice.app"' "$APP_DIR"
 fi
 
 echo "Done: $APP_DIR"

@@ -5,7 +5,7 @@ import Foundation
 final class VoiceApplicationController: NSObject {
     private let settingsStore = SettingsStore()
     private let permissionsCoordinator = PermissionsCoordinator()
-    private let transcriptionEngine: TranscriptionEngine = SpeechRecognizerService()
+    private let transcriptionEngine = SpeechRecognizerService()
     private let textInsertionService = TextInsertionService()
     private let panelController = FloatingStatusPanelController()
     private let hotkeyManager = HotkeyManager()
@@ -34,6 +34,7 @@ final class VoiceApplicationController: NSObject {
         AppLogger.shared.log("voice app start")
         AppLogger.shared.log("Log file: \(AppLogger.shared.logFilePath())")
         AppLogger.shared.log("Transcription engine: \(transcriptionEngine.engineName)")
+        transcriptionEngine.warmUpLanguageAssets()
         logEnvironmentDiagnostics(reason: "startup")
         configureMenuBarItem()
         wireEvents()
@@ -581,7 +582,7 @@ final class VoiceApplicationController: NSObject {
     }
 
     private func tccLogCommand() -> String {
-        let bundleId = Bundle.main.bundleIdentifier ?? "ai.gokul.voice"
+        let bundleId = Bundle.main.bundleIdentifier ?? "com.voice.app"
         return "log stream --debug --predicate 'subsystem == \"com.apple.TCC\" AND eventMessage CONTAINS \"\(bundleId)\"'"
     }
 

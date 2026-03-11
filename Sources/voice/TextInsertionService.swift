@@ -318,7 +318,22 @@ final class TextInsertionService {
             )
         }
 
-        let focusedElement = focusedValue as! AXUIElement
+        guard CFGetTypeID(focusedValue) == AXUIElementGetTypeID() else {
+            if diagnosticsEnabled {
+                AppLogger.shared.log(
+                    "Focused element had unexpected type: \(type(of: focusedValue)).",
+                    level: .debug
+                )
+            }
+            return FocusedElementContext(
+                hasFocusedElement: false,
+                role: nil,
+                subrole: nil,
+                isEditableSurface: false,
+                isSecureTextInput: false
+            )
+        }
+        let focusedElement = unsafeDowncast(focusedValue, to: AXUIElement.self)
         let role = stringAttribute(kAXRoleAttribute as String, for: focusedElement)
         let subrole = stringAttribute(kAXSubroleAttribute as String, for: focusedElement)
         let editableAttribute = boolAttribute("AXEditable", for: focusedElement) ?? false

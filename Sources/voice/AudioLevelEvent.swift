@@ -1,7 +1,7 @@
 import Foundation
 
 extension Notification.Name {
-    static let voiceAudioLevelDidUpdate = Notification.Name("ai.gokul.voice.audioLevelDidUpdate")
+    static let voiceAudioLevelDidUpdate = Notification.Name("com.voice.app.audioLevelDidUpdate")
 }
 
 enum VoiceAudioLevelUserInfoKey {

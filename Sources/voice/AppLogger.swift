@@ -10,7 +10,7 @@ enum LogLevel: String {
 final class AppLogger: @unchecked Sendable {
     static let shared = AppLogger()
 
-    private let queue = DispatchQueue(label: "ai.gokul.voice.logger", qos: .utility)
+    private let queue = DispatchQueue(label: "com.voice.app.logger", qos: .utility)
     private let fileManager = FileManager.default
     private let logFileURL: URL
 
