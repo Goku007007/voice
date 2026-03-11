@@ -7,6 +7,100 @@ final class SpeechRecognizerService: TranscriptionEngine {
     let engineName = "Apple Speech"
     private let stopFinalizeHardTimeoutMs = 10_000
     private let stopFinalizeInactivityDelayMs = 900
+    private let stopFinalizeCheckIntervalMs = 160
+    private static let fallbackRecognitionLocaleIdentifier = "en-US"
+    private static let englishRegionLocaleMap = [
+        "US": "en-US",
+        "IN": "en-IN",
+        "GB": "en-GB"
+    ]
+    private static let contextualVocabulary = [
+        "Voice",
+        "Voice app",
+        "dictation",
+        "transcription",
+        "speech recognizer",
+        "speech recognition",
+        "Git",
+        "GitHub",
+        "git commit",
+        "git checkout",
+        "git pull",
+        "git push",
+        "pull request",
+        "merge conflict",
+        "cherry-pick",
+        "rebase",
+        "squash merge",
+        "code review",
+        "Xcode",
+        "Swift",
+        "SwiftUI",
+        "macOS",
+        "AVAudioEngine",
+        "SFSpeechRecognizer",
+        "SpeechRecognizerService",
+        "TranscriptionEngine",
+        "VoiceRuntimeError",
+        "API",
+        "REST API",
+        "GraphQL",
+        "endpoint",
+        "JSON",
+        "YAML",
+        "OpenAPI",
+        "backend",
+        "frontend",
+        "full stack",
+        "database",
+        "PostgreSQL",
+        "MySQL",
+        "SQLite",
+        "Redis",
+        "migration",
+        "transaction",
+        "TypeScript",
+        "JavaScript",
+        "Node.js",
+        "React",
+        "Next.js",
+        "Python",
+        "Go",
+        "Rust",
+        "Java",
+        "Kotlin",
+        "C plus plus",
+        "Docker",
+        "Kubernetes",
+        "CI CD",
+        "GitHub Actions",
+        "build pipeline",
+        "unit test",
+        "integration test",
+        "regression test",
+        "test coverage",
+        "lint",
+        "formatter",
+        "refactor",
+        "debug",
+        "stack trace",
+        "exception",
+        "memory leak",
+        "race condition",
+        "deadlock",
+        "thread safe",
+        "concurrency",
+        "async await",
+        "command line",
+        "terminal",
+        "shell script",
+        "Bash",
+        "Zsh",
+        "Makefile",
+        "dependency injection",
+        "microservice",
+        "monorepo"
+    ]
 
     private enum EngineState {
         case idle
@@ -28,6 +122,8 @@ final class SpeechRecognizerService: TranscriptionEngine {
     private var audioTapAppender: AudioTapAppender?
     private var stopFinalizeTask: Task<Void, Never>?
     private var stopFinalizeDeadline: Date?
+    private var stopLastTranscriptUpdateAt: Date?
+    private var hasReceivedPostStopTranscript = false
 
     func start(
         options: TranscriptionStartOptions,
@@ -44,7 +140,9 @@ final class SpeechRecognizerService: TranscriptionEngine {
         cancelRunningTask()
         engineState = .starting
 
-        let speechRecognizer = SFSpeechRecognizer(locale: Locale.current)
+        let recognitionLocale = resolveRecognitionLocale()
+        AppLogger.shared.log("Using explicit speech locale: \(recognitionLocale.identifier)", level: .info)
+        let speechRecognizer = SFSpeechRecognizer(locale: recognitionLocale)
         guard let speechRecognizer, speechRecognizer.isAvailable else {
             engineState = .idle
             AppLogger.shared.log("Speech recognizer unavailable", level: .error)
@@ -59,6 +157,7 @@ final class SpeechRecognizerService: TranscriptionEngine {
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
         request.taskHint = .dictation
+        request.contextualStrings = Self.contextualVocabulary
         switch options.profile {
         case .appleAutomatic:
             request.requiresOnDeviceRecognition = false
@@ -68,7 +167,7 @@ final class SpeechRecognizerService: TranscriptionEngine {
             } else {
                 request.requiresOnDeviceRecognition = false
                 AppLogger.shared.log(
-                    "On-device recognition not supported for current locale/device; falling back to automatic mode.",
+                    "On-device recognition not supported for locale \(recognitionLocale.identifier) or current device; falling back to automatic mode.",
                     level: .warning
                 )
             }
@@ -125,8 +224,10 @@ final class SpeechRecognizerService: TranscriptionEngine {
         audioEngine.stop()
         removeAudioTapIfNeeded()
         recognitionRequest?.endAudio()
+        stopLastTranscriptUpdateAt = nil
+        hasReceivedPostStopTranscript = false
         stopFinalizeDeadline = Date().addingTimeInterval(TimeInterval(stopFinalizeHardTimeoutMs) / 1_000)
-        scheduleStopFinalize(usingInactivityDelay: stopFinalizeInactivityDelayMs)
+        scheduleStopFinalizeCheck()
     }
 
     func cancel() {
@@ -145,7 +246,8 @@ final class SpeechRecognizerService: TranscriptionEngine {
                 return
             }
             if engineState == .stopping {
-                scheduleStopFinalize(usingInactivityDelay: stopFinalizeInactivityDelayMs)
+                hasReceivedPostStopTranscript = true
+                stopLastTranscriptUpdateAt = Date()
             }
         }
 
@@ -171,6 +273,8 @@ final class SpeechRecognizerService: TranscriptionEngine {
         stopFinalizeTask?.cancel()
         stopFinalizeTask = nil
         stopFinalizeDeadline = nil
+        stopLastTranscriptUpdateAt = nil
+        hasReceivedPostStopTranscript = false
         completionDelivered = true
         switch result {
         case .success(let text):
@@ -186,6 +290,8 @@ final class SpeechRecognizerService: TranscriptionEngine {
         stopFinalizeTask?.cancel()
         stopFinalizeTask = nil
         stopFinalizeDeadline = nil
+        stopLastTranscriptUpdateAt = nil
+        hasReceivedPostStopTranscript = false
         audioEngine.stop()
         removeAudioTapIfNeeded()
         recognitionTask?.cancel()
@@ -219,20 +325,39 @@ final class SpeechRecognizerService: TranscriptionEngine {
         }
     }
 
-    private func scheduleStopFinalize(usingInactivityDelay delayMs: Int) {
-        let remainingMs: Int
-        if let deadline = stopFinalizeDeadline {
-            remainingMs = max(0, Int(deadline.timeIntervalSinceNow * 1_000))
-        } else {
-            remainingMs = delayMs
-        }
-        let waitMs = min(delayMs, remainingMs)
-
+    private func scheduleStopFinalizeCheck() {
         stopFinalizeTask?.cancel()
         stopFinalizeTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(waitMs))
-            self?.finishIfNeededFromCurrentTranscript()
+            guard let self else {
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(self.stopFinalizeCheckIntervalMs))
+            self.evaluateStopFinalize()
         }
+    }
+
+    private func evaluateStopFinalize() {
+        guard engineState == .stopping, !completionDelivered else {
+            return
+        }
+
+        let now = Date()
+        if let deadline = stopFinalizeDeadline, now >= deadline {
+            AppLogger.shared.log("Speech finalize hard timeout reached; finishing with best available transcript.", level: .warning)
+            finishIfNeededFromCurrentTranscript()
+            return
+        }
+
+        if hasReceivedPostStopTranscript,
+           let lastUpdate = stopLastTranscriptUpdateAt {
+            let inactiveMs = Int(now.timeIntervalSince(lastUpdate) * 1_000)
+            if inactiveMs >= stopFinalizeInactivityDelayMs {
+                finishIfNeededFromCurrentTranscript()
+                return
+            }
+        }
+
+        scheduleStopFinalizeCheck()
     }
 
     private func updateCurrentTranscriptKeepingLongest(_ candidate: String) {
@@ -241,6 +366,35 @@ final class SpeechRecognizerService: TranscriptionEngine {
         if candidateTrimmed.count >= currentTrimmed.count {
             currentTranscript = candidate
         }
+    }
+
+    private func resolveRecognitionLocale() -> Locale {
+        for preferredLanguage in Locale.preferredLanguages {
+            let normalizedIdentifier = Self.normalizedLocaleIdentifier(preferredLanguage)
+            if normalizedIdentifier == "en-US" || normalizedIdentifier == "en-IN" || normalizedIdentifier == "en-GB" {
+                return Locale(identifier: normalizedIdentifier)
+            }
+
+            let subtags = normalizedIdentifier.split(separator: "-")
+            let languageCode = subtags.first?.lowercased()
+            guard languageCode == "en" else {
+                continue
+            }
+
+            let regionCode = subtags.dropFirst().first(where: { $0.count == 2 || $0.count == 3 })?.uppercased()
+            if let regionCode,
+               let mappedIdentifier = Self.englishRegionLocaleMap[regionCode] {
+                return Locale(identifier: mappedIdentifier)
+            }
+
+            return Locale(identifier: Self.fallbackRecognitionLocaleIdentifier)
+        }
+
+        return Locale(identifier: Self.fallbackRecognitionLocaleIdentifier)
+    }
+
+    private static func normalizedLocaleIdentifier(_ identifier: String) -> String {
+        identifier.replacingOccurrences(of: "_", with: "-")
     }
 }
 

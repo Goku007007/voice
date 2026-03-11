@@ -67,7 +67,7 @@ struct AppSettings {
         capitalizeFirstLetter: true,
         insertionMode: .directPaste,
         recordingMode: .toggle,
-        transcriptionProfile: .appleOnDevicePreferred,
+        transcriptionProfile: .appleAutomatic,
         cleanupMode: .basic,
         soundFeedback: true
     )
